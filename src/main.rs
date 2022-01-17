@@ -1,45 +1,21 @@
+use log::{error, info, trace};
 use nmea_parser::{gnss::RmcData, NmeaParser, ParsedMessage};
 use std::fs::OpenOptions;
 use std::io::prelude::*;
-use std::io::Read;
-use std::net::{TcpListener, UdpSocket};
+use std::net::UdpSocket;
 
-#[allow(dead_code)]
 fn recv_udp(buff: &mut [u8], socket: &UdpSocket) -> Option<String> {
     match socket.recv_from(buff) {
         Err(e) => {
-            eprintln!("Failed to recv_from: {:?}", e);
+            error!("Failed to recv_from: {:?}", e);
             None
         }
         Ok((amt, _src)) => match std::str::from_utf8(&buff[..amt]) {
             Ok(sentence) => Some(sentence.to_string()),
             Err(e) => {
-                eprintln!("Failed to parse from str: {:?}", e);
+                error!("Failed to parse from str: {:?}", e);
                 None
             }
-        },
-    }
-}
-
-#[allow(dead_code)]
-fn recv_tcp(buff: &mut [u8], listener: &TcpListener) -> Option<String> {
-    match listener.accept() {
-        Err(e) => {
-            eprintln!("Failed to accept TCP connection: {:?}", e);
-            None
-        }
-        Ok((mut socket, _addr)) => match socket.read(buff) {
-            Err(e) => {
-                eprintln!("Failed to read TCP connection: {:?}", e);
-                None
-            }
-            Ok(amt) => match std::str::from_utf8(&buff[..amt]) {
-                Ok(sentence) => Some(sentence.to_string()),
-                Err(e) => {
-                    eprintln!("Failed to parse from str: {:?}", e);
-                    None
-                }
-            },
         },
     }
 }
@@ -47,7 +23,7 @@ fn recv_tcp(buff: &mut [u8], listener: &TcpListener) -> Option<String> {
 fn get_rmc(parser: &mut NmeaParser, sentence: &str) -> Option<RmcData> {
     match parser.parse_sentence(sentence) {
         Err(e) => {
-            eprintln!("Failed to parse sentence {:?} due to {:?}", sentence, e);
+            error!("Failed to parse sentence {:?} due to {:?}", sentence, e);
             None
         }
         Ok(parsed) => match parsed {
@@ -58,8 +34,9 @@ fn get_rmc(parser: &mut NmeaParser, sentence: &str) -> Option<RmcData> {
 }
 
 fn main() {
+    env_logger::init();
+
     let socket = UdpSocket::bind("0.0.0.0:8888").expect("Couldn't build socket");
-    // let listener = TcpListener::bind("0.0.0.0:8888").expect("Failed to build listener");
     let mut file = OpenOptions::new()
         .write(true)
         .append(true)
@@ -71,10 +48,11 @@ fn main() {
     let mut last_lat = None;
     let mut last_long = None;
 
+    info!("Ready for connections.");
     loop {
         if let Some(sentence) = recv_udp(&mut buff, &socket) {
             if let Some(rmc) = get_rmc(&mut parser, &sentence) {
-                println!("Processing {:?}", rmc);
+                trace!("Processing {:?}", rmc);
 
                 let this_lat = match rmc.latitude {
                     Some(lat) => lat,
@@ -92,12 +70,12 @@ fn main() {
 
                     // about half a second in either direction ~40-50ft
                     if diff_lat.abs() < 0.0001 || diff_long.abs() < 0.0001 {
-                        // same location
+                        trace!("Location has not moved.");
                         continue;
                     }
                 }
 
-                println!("Updating location.");
+                info!("Updating location.");
                 last_lat = Some(this_lat);
                 last_long = Some(this_long);
 
@@ -108,7 +86,7 @@ fn main() {
                 };
 
                 if result.is_err() {
-                    println!("Failed to write sentence due to {:?}", result);
+                    error!("Failed to write sentence due to {:?}", result);
                 }
             }
         }
