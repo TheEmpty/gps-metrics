@@ -1,6 +1,8 @@
 use nmea_parser::{gnss::RmcData, NmeaParser, ParsedMessage};
-use std::net::{UdpSocket, TcpListener};
+use std::fs::OpenOptions;
+use std::io::prelude::*;
 use std::io::Read;
+use std::net::{TcpListener, UdpSocket};
 
 #[allow(dead_code)]
 fn recv_udp(buff: &mut [u8], socket: &UdpSocket) -> Option<String> {
@@ -58,6 +60,12 @@ fn get_rmc(parser: &mut NmeaParser, sentence: &str) -> Option<RmcData> {
 fn main() {
     let socket = UdpSocket::bind("0.0.0.0:8888").expect("Couldn't build socket");
     // let listener = TcpListener::bind("0.0.0.0:8888").expect("Failed to build listener");
+    let mut file = OpenOptions::new()
+        .write(true)
+        .append(true)
+        .create(true)
+        .open("nemas.txt")
+        .expect("Failed to open nemas.txt");
     let mut parser = NmeaParser::new();
     let mut buff = [0; 100];
     let mut last_lat = None;
@@ -66,12 +74,21 @@ fn main() {
     loop {
         if let Some(sentence) = recv_udp(&mut buff, &socket) {
             if let Some(rmc) = get_rmc(&mut parser, &sentence) {
-                let this_lat = rmc.latitude.unwrap();
-                let this_long = rmc.longitude.unwrap();
+                println!("Processing {:?}", rmc);
 
-                if last_lat.is_some() && last_long.is_some() {
-                    let diff_lat: f64 = this_lat - last_lat.unwrap();
-                    let diff_long: f64 = this_long - last_long.unwrap();
+                let this_lat = match rmc.latitude {
+                    Some(lat) => lat,
+                    None => continue,
+                };
+
+                let this_long = match rmc.longitude {
+                    Some(long) => long,
+                    None => continue,
+                };
+
+                if let (Some(last_lat_val), Some(last_long_val)) = (last_lat, last_long) {
+                    let diff_lat: f64 = this_lat - last_lat_val;
+                    let diff_long: f64 = this_long - last_long_val;
 
                     // about half a second in either direction ~40-50ft
                     if diff_lat.abs() < 0.0001 || diff_long.abs() < 0.0001 {
@@ -80,13 +97,18 @@ fn main() {
                     }
                 }
 
+                println!("Updating location.");
                 last_lat = Some(this_lat);
                 last_long = Some(this_long);
 
-                if "\n" == &sentence[sentence.len() - 1..] {
-                    print!("{}", sentence);
+                let result = if "\n" == &sentence[sentence.len() - 1..] {
+                    write!(file, "{}", sentence)
                 } else {
-                    println!("{}", sentence);
+                    writeln!(file, "{}", sentence)
+                };
+
+                if result.is_err() {
+                    println!("Failed to write sentence due to {:?}", result);
                 }
             }
         }
