@@ -86,7 +86,10 @@ fn main() {
                 };
 
                 if result.is_err() {
-                    error!("Failed to write sentence due to {:?}", result);
+                    error!(
+                        "Failed to write sentence '{}' due to {:?}",
+                        sentence, result
+                    );
                 }
             }
         }
