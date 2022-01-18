@@ -1,6 +1,6 @@
 use log::{error, info, trace};
 use nmea_parser::{gnss::RmcData, NmeaParser, ParsedMessage};
-use std::fs::OpenOptions;
+use std::fs::{File, OpenOptions};
 use std::io::prelude::*;
 use std::net::UdpSocket;
 
@@ -33,12 +33,45 @@ fn get_rmc(parser: &mut NmeaParser, sentence: &str) -> Option<RmcData> {
     }
 }
 
+fn get_last_sentence(file: &mut File) -> Option<String> {
+    let mut offset = -5;
+    let mut last_byte = vec![0; 1];
+
+    loop {
+        offset -= 1;
+
+        if let Err(e) = file.seek(std::io::SeekFrom::End(offset)) {
+            error!("Failed to seek due to {:?}", e);
+            return None;
+        }
+
+        if let Err(e) = file.read(&mut last_byte) {
+            error!("Failed to read due to {:?}", e);
+            return None;
+        }
+
+        if last_byte[0] == b'\n' {
+            break;
+        }
+    }
+
+    let mut str = String::new();
+    match file.read_to_string(&mut str) {
+        Ok(_) => Some(str),
+        Err(e) => {
+            error!("Failed to read_to_string due to {:?}", e);
+            None
+        }
+    }
+}
+
 fn main() {
     env_logger::init();
 
     let socket = UdpSocket::bind("0.0.0.0:8888").expect("Couldn't build socket");
     let mut file = OpenOptions::new()
         .write(true)
+        .read(true)
         .append(true)
         .create(true)
         .open("nemas.txt")
@@ -47,6 +80,14 @@ fn main() {
     let mut buff = [0; 100];
     let mut last_lat = None;
     let mut last_long = None;
+
+    if let Some(last_sentence) = get_last_sentence(&mut file) {
+        if let Some(rmc) = get_rmc(&mut parser, &last_sentence) {
+            last_lat = rmc.latitude;
+            last_long = rmc.longitude;
+            info!("Restored from {:?}, {:?}", last_lat, last_long);
+        }
+    }
 
     info!("Ready for connections.");
     loop {
